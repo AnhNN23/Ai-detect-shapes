@@ -4,3 +4,4 @@ uvicorn[standard]
 fastapi
 opencv-python
 numpy
+python-multipart
