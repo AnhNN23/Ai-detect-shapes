@@ -6,54 +6,78 @@ def detect_shape(image_path):
     if image is None:
         return "Image not found"
 
+    # Chuyển đổi sang grayscale
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    edged = cv2.Canny(blurred, 50, 150)
+    cv2.imwrite('debug_gray.png', gray)
 
-    # Tìm các contours
+    # Làm mờ ảnh bằng Gaussian Blur
+    blurred = cv2.GaussianBlur(gray, (9, 9), 2)
+    cv2.imwrite('debug_blurred.png', blurred)
+
+    # Phát hiện biên với bộ lọc Canny
+    edged = cv2.Canny(blurred, 30, 150)
+    cv2.imwrite('debug_edged.png', edged)
+
+    # Tìm các đường viền
     contours, _ = cv2.findContours(edged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
+    # Đếm hình dạng
     shape_counts = {"circle": 0, "rectangle": 0, "invalid": 0}
+    log_messages = []
 
     for contour in contours:
-        # Bỏ qua contour quá nhỏ (loại nhiễu)
-        if cv2.contourArea(contour) < 1000:
+        # Bỏ qua các vùng nhiễu nhỏ
+        if cv2.contourArea(contour) < 500:
             continue
 
-        # Xác định hình dạng từ contour
+        # Xấp xỉ đa giác
         approx = cv2.approxPolyDP(contour, 0.04 * cv2.arcLength(contour, True), True)
 
-        # Nếu có 4 đỉnh, có khả năng là banknote (hình chữ nhật)
+        # 🟩 Kiểm tra hình chữ nhật
         if len(approx) == 4:
             x, y, w, h = cv2.boundingRect(contour)
             aspect_ratio = float(w) / h
-            
-            # Kiểm tra tỷ lệ khung hình và diện tích
-            if 1.5 < aspect_ratio < 2.5 and w * h > 10000:
+            if 0.8 < aspect_ratio < 1.2:
                 shape_counts["rectangle"] += 1
+                cv2.drawContours(image, [approx], -1, (0, 255, 0), 3)
             else:
                 shape_counts["invalid"] += 1
 
-        # Nếu số điểm lớn hơn 6, có khả năng là hình tròn (coin)
-        elif len(approx) > 6:
-            (x, y), radius = cv2.minEnclosingCircle(contour)
-            circle_area = 3.14 * radius * radius
-            contour_area = cv2.contourArea(contour)
-            
-            # So sánh diện tích hình tròn ước lượng với diện tích contour
-            if 0.8 < contour_area / circle_area < 1.2:
-                shape_counts["circle"] += 1
-            else:
-                shape_counts["invalid"] += 1
+        # 🔵 Kiểm tra hình tròn với HoughCircles
         else:
-            shape_counts["invalid"] += 1
+            circles = cv2.HoughCircles(blurred, cv2.HOUGH_GRADIENT, 1, 20,
+                                       param1=50, param2=30, minRadius=1, maxRadius=40)
 
-    # Đưa ra kết quả dựa trên số lượng đối tượng phát hiện được
+            if circles is not None:
+                circles = np.uint16(np.around(circles))
+                for i in circles[0, :]:
+                    # Tâm và bán kính
+                    center = (i[0], i[1])
+                    radius = i[2]
+
+                    # Vẽ hình tròn và tâm
+                    cv2.circle(image, center, radius, (255, 0, 0), 3)
+                    cv2.circle(image, center, 3, (0, 0, 255), -1)
+
+                    # Đánh dấu hình tròn
+                    shape_counts["circle"] += 1
+            else:
+                shape_counts["invalid"] += 1
+
+    # Lưu thông tin log vào file
+    with open("shape_detection_log.txt", "w") as log_file:
+        for msg in log_messages:
+            log_file.write(msg + "\n")
+
+    # Lưu kết quả ảnh sau khi đánh dấu
+    cv2.imwrite('debug_final_image.png', image)
+
+    # Đưa ra kết quả
     if shape_counts["circle"] > 0 and shape_counts["rectangle"] == 0:
         return "coin"
     elif shape_counts["rectangle"] > 0 and shape_counts["circle"] == 0:
         return "banknote"
     elif shape_counts["circle"] > 0 and shape_counts["rectangle"] > 0:
-        return "invalid"  # Hỗn hợp, không hợp lệ
+        return "invalid"
     else:
         return "unknown"
